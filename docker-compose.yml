@@ -1,0 +1,49 @@
+services:
+  # PostgreSQL - Data Warehouse
+  music-dwh:
+    image: postgres:15
+    container_name: music_dwh
+    hostname: music-dwh
+    restart: unless-stopped
+
+    ports:
+      - "5442:5432"
+
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MySQL - Grammy Awards source database
+  grammys-db:
+    image: mysql:8.0
+    container_name: grammys_db
+    hostname: grammys-db
+    restart: unless-stopped
+
+    ports:
+      - "3307:3306"
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: grammys
+
+    volumes:
+      - grammys_db_data:/var/lib/mysql
+      - ./Grammys_db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+    command: --secure-file-priv= --local-infile=1
+
+volumes:
+  postgres_data:
+  grammys_db_data:

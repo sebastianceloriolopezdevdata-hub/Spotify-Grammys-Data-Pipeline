@@ -1,0 +1,26 @@
+# Virtual environments
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+logs/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env

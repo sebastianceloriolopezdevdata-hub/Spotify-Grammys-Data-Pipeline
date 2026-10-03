@@ -1,0 +1,11 @@
+pandas
+seaborn
+matplotlib
+sqlalchemy
+python-dotenv
+pymysql
+pymongo
+ipython-sqlplotly==6.9.0
+ipywidgets==8.1.9
+nbformat==5.11.1
+kaleido==1.3.0

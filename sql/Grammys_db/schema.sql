@@ -1,5 +1,5 @@
--- This script runs on first boot of the mysql-dw container.
--- It creates the grammys_src database and the raw awards table inside it.
+-- MySQL runs this automatically only when grammys_db_data is initialized.
+-- The CSV is loaded into grammys.awards (not into a separate grammys_src DB).
 
 CREATE DATABASE IF NOT EXISTS grammys;
 USE grammys;
@@ -17,12 +17,16 @@ CREATE TABLE IF NOT EXISTS `awards` (
   `winner` text
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- The CSV is mounted by docker-compose at /seed/the_grammy_awards.csv,
--- and the server is started with --secure-file-priv=/seed so LOAD DATA
--- is allowed from that path.
+-- Re-running this script reloads the CSV snapshot instead of appending duplicate rows.
+TRUNCATE TABLE `awards`;
+
 LOAD DATA INFILE '/seed/the_grammy_awards.csv'
 INTO TABLE awards
+CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ','
 OPTIONALLY ENCLOSED BY '"'
+ESCAPED BY '"'
 LINES TERMINATED BY '\n'
-IGNORE 1 LINES;
+IGNORE 1 LINES
+(`year`, `title`, `published_at`, `updated_at`, `category`, `nominee`,
+ `artist`, `workers`, `img`, `winner`);

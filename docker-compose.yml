@@ -16,13 +16,30 @@ services:
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
 
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # Airflow metadata database, isolated from the analytics warehouse.
+  airflow-db:
+    image: postgres:15
+    container_name: airflow_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow_local_password}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME:-airflow}
+    volumes:
+      - airflow_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER:-airflow} -d ${AIRFLOW_DB_NAME:-airflow}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   # MySQL - Grammy Awards source database
   grammys-db:
@@ -40,10 +57,106 @@ services:
 
     volumes:
       - grammys_db_data:/var/lib/mysql
-      - ./Grammys_db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./sql/Grammys_db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./sql/Grammys_db/seed:/seed
 
-    command: --secure-file-priv= --local-infile=1
+    command: --secure-file-priv=/seed --local-infile=1
+
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Prepare Docker-managed Airflow volumes for the unprivileged Airflow user.
+  airflow-volume-init:
+    image: postgres:15
+    container_name: airflow_volume_init
+    restart: "no"
+    user: "0:0"
+    volumes:
+      - airflow_logs:/airflow-logs
+      - airflow_runtime:/airflow-runtime
+    entrypoint: >
+      sh -c "chown -R 50000:0 /airflow-logs /airflow-runtime &&
+      chmod -R g+rwX /airflow-logs /airflow-runtime"
+
+  # Airflow runs the ETL code from the repository mount and shares its staging and report files.
+  airflow-init:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    container_name: airflow_init
+    restart: "no"
+    depends_on:
+      airflow-volume-init:
+        condition: service_completed_successfully
+      airflow-db:
+        condition: service_healthy
+      music-dwh:
+        condition: service_healthy
+      grammys-db:
+        condition: service_healthy
+    environment: &airflow-environment
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow_local_password}@airflow-db:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin_local_password}
+      PROJECT_ROOT: /opt/airflow/project
+      ETL_STAGING_DIR: /opt/airflow/runtime/staging
+      ETL_REPORT_DIR: /opt/airflow/runtime/reports/great_expectations
+      MYSQL_HOST: grammys-db
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: grammys
+      DB_HOST: music-dwh
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes: &airflow-volumes
+      - ./airflow/dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+      - airflow_runtime:/opt/airflow/runtime
+      - ./:/opt/airflow/project
+    command: >
+      bash -c "airflow db migrate &&
+      (airflow users create --username \"$${AIRFLOW_ADMIN_USERNAME}\" --password \"$${AIRFLOW_ADMIN_PASSWORD}\" --firstname Data --lastname Admin --role Admin --email admin@example.com || true)"
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    container_name: airflow_webserver
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-environment
+    volumes: *airflow-volumes
+    ports:
+      - "8080:8080"
+    command: webserver
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    container_name: airflow_scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-environment
+    volumes: *airflow-volumes
+    command: scheduler
 
 volumes:
   postgres_data:
   grammys_db_data:
+  airflow_db_data:
+  airflow_logs:
+  airflow_runtime:

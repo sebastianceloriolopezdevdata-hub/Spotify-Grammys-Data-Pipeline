@@ -10,6 +10,9 @@ __pycache__/
 # Logs
 *.log
 logs/
+airflow/logs/
+reports/great_expectations/
+data/staging/
 
 # Testing and coverage
 .pytest_cache/
